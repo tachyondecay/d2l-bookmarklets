@@ -25,6 +25,27 @@ Bookmarklets.removeLatex = function(frame) {
 }
 
 /**
+ * Find the underlying LaTeX stored in a MathML annotation, parse it from 
+ * a JSON object, escaping and replacing newlines.
+ */
+Bookmarklets.getAnnotation = function(mathml) {
+    var raw_latex = mathml.contents()
+                            .find('annotation')
+                            .text()
+                            .replace(/\n/gmi, "\\n")
+                            .replace(/\\/gmi, "\\\\");
+    try {
+        raw_latex = $.parseJSON(raw_latex).math
+                        .replace(/\\n/gmi, "<br/>")
+                        .replace(/\{\{(.*?)\}\}/gi, "{$1}");
+        return raw_latex;
+    } catch(e) {
+        console.log(e);
+        return false;
+    }
+}
+
+/**
  * This is the main event. This wrapper is so we can import and run the 
  * bookmarklet from this external file.
  */
@@ -49,31 +70,25 @@ Bookmarklets.parseLatex = function() {
     var parsed = skipped = 0;
     $.each(equations, function(key, equation) {
         var mathml = $(decodeURIComponent($(equation).data('d2l-mathml')));
-        var raw_latex = mathml
-                            .contents()
-                                .find('annotation')
-                                .text()
-                                .replace("\\(", "%%")       // Deal with JSON parser barfing on inline notation
-                                .replace("\\)", "%%")       // Ditto
-                                .replace("\\", "\\\\");     // ESCAPE ALL THE THINGS
-        try {
-            raw_latex = $.parseJSON(raw_latex)
-                            .math
-                                .replace(/^%%/, "\\(")
-                                .replace(/%%$/, "\\)");
-            parsed += 1;
-        } catch(e) {
+        var raw_latex = self.getAnnotation(mathml);
+        if(!raw_latex) {
             // Sometimes the JSON parser will still barf, and tbh ain't nobody got 
             // time to escape all the weird stuff D2L does with its annotations.
-            console.log(e);
             skipped += 1;
             return true;
         }
+        parsed += 1;
         // Make MathML display="inline" if necessary
         if(raw_latex.match(/\\\(.*?\\\)/, 'gmi')) {
             mathml.attr('display', 'inline');
-            $(equation).attr('data-d2l-mathml', encodeURIComponent(mathml[0].outerHTML));
         }
+        // Replace double braces for great justice
+        mathml.contents()
+            .find('annotation')
+            .text(function() {
+                return $(this).text().replace(/\{\{(.*?)\}\}/gi, "{$1}");
+            });
+        $(equation).attr('data-d2l-mathml', encodeURIComponent(mathml[0].outerHTML));
         // Build our replacement
         $(equation)
             .hide()
@@ -84,7 +99,7 @@ Bookmarklets.parseLatex = function() {
                         cursor: "pointer",
                         "font-family": "monospace"
                     })
-                    .text(raw_latex)
+                    .html(raw_latex)
                     .attr('title', 'Click to revert.')
                     .click(function(e) {
                         $(this)
